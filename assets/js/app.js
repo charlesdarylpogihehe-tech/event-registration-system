@@ -1,97 +1,84 @@
-async function register() {
-  const registerForm = document.querySelector("#register-form");
+async function main() {
+  const page = document.body.dataset.page;
 
-  if (!registerForm) return;
+  if (!requireConfigured()) return;
 
-  registerForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
+  // Display navigation immediately.
+  nav(null, null);
 
-    // Keep a reference to the form before the async operation.
-    const formElement = event.currentTarget;
-    const form = formData(formElement);
+  // Load public homepage events independently of login checks.
+  if (page === "home") {
+    home().catch((error) => {
+      console.error("Homepage loading error:", error);
+      notify(error.message || "Unable to load events.", true);
+    });
+  }
 
-    const fullName = (form.full_name || "").trim();
-    const email = (form.email || "").trim().toLowerCase();
+  try {
+    const user = await getUser();
 
-    if (!fullName) {
-      return notify("Please enter your full name.", true);
+    window.__user = Boolean(user);
+    window.__admin = false;
+    window.__student = false;
+
+    if (user) {
+      const [admin, studentProfileData] = await Promise.all([
+        isAdmin(user),
+        studentProfile(user)
+      ]);
+
+      window.__admin = admin;
+      window.__student = Boolean(studentProfileData);
     }
 
-    if (!email) {
-      return notify("Please enter your email address.", true);
+    // Update navigation after checking account permissions.
+    nav(user, null);
+
+    if (page === "home") return;
+
+    if (page === "login" || page === "admin-login") {
+      return login();
     }
 
-    if (form.password !== form.confirm_password) {
-      return notify("Passwords do not match.", true);
+    if (page === "register") {
+      return register();
     }
 
-    if ((form.password || "").length < 6) {
-      return notify(
-        "Your password must contain at least 6 characters.",
-        true
-      );
-    }
-
-    const button = formElement.querySelector(
-      'button[type="submit"], button:not([type])'
-    );
-
-    if (button) button.disabled = true;
-
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password: form.password,
-        options: {
-          data: {
-            full_name: fullName
-          }
-        }
-      });
-
-      if (error) {
-        console.error("Supabase sign-up error:", error);
-        return notify(error.message, true);
+    if (page === "student-dashboard" || page === "event-detail") {
+      if (!user) {
+        return window.location.replace("../login.html");
       }
 
-      if (data.session && data.user) {
-        const { data: student, error: profileError } =
-          await supabase
-            .from("student_profiles")
-            .select("id")
-            .eq("id", data.user.id)
-            .maybeSingle();
-
-        if (profileError || !student) {
-          console.error("Student profile error:", profileError);
-
-          return notify(
-            "Account created, but student profile was not found. Please check your Supabase database setup.",
-            true
-          );
-        }
-
-        window.location.href = "student/dashboard.html";
-        return;
+      if (!window.__student || window.__admin) {
+        return window.location.replace("../index.html");
       }
 
-      // Corrected: use the saved form reference.
-      formElement.reset();
+      const prof = await studentProfile(user);
 
-      notify(
-        "Student account created successfully! Please check your email to confirm your account before logging in."
-      );
+      if (page === "student-dashboard") {
+        return studentDashboard(user, prof);
+      }
 
-    } catch (error) {
-      console.error("Registration failed:", error);
-
-      notify(
-        error.message || "Student registration failed.",
-        true
-      );
-
-    } finally {
-      if (button) button.disabled = false;
+      return eventDetail(user);
     }
-  });
+
+    if (["admin-dashboard", "event-form", "participants"].includes(page)) {
+      if (!user) {
+        return window.location.replace("../admin-login.html");
+      }
+
+      if (!window.__admin) {
+        return window.location.replace("../index.html");
+      }
+
+      if (page === "admin-dashboard") return adminDashboard();
+      if (page === "event-form") return eventForm();
+
+      return participants();
+    }
+
+  } catch (error) {
+    console.error("Application startup error:", error);
+    notify(error.message || "Application startup failed.", true);
+  }
 }
